@@ -1,0 +1,563 @@
+<script>
+(function(){
+  "use strict";
+
+  var GESTIONA = ["Bamba","Silvia","Otros"];
+  var TIPO_CLIENTE = ["Organizador","Particular"];
+  var TIPO_VIAJE = ["Tradicional Kansala","Retiro de yoga","Escuela de percusión","Viaje mixto","Otros"];
+  var PROCEDENCIA = ["España","UK","Francia","Otros"];
+  var ESTADOS = [["curso","En curso"],["pensando","Pensando"],["no_interes","No interés"]];
+
+  function slug(s){
+    return (s||"").toString().normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+      .toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"") || "sin-nombre";
+  }
+  function fmtDate(iso){
+    if(!iso) return "";
+    var d = new Date(iso);
+    if(isNaN(d)) return iso;
+    return d.toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit",year:"numeric"});
+  }
+  function fmtDateTime(iso){
+    if(!iso) return "";
+    var d = new Date(iso);
+    if(isNaN(d)) return iso;
+    return d.toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit",year:"numeric"}) + " · " +
+           d.toLocaleTimeString("es-ES",{hour:"2-digit",minute:"2-digit"});
+  }
+  function esc(s){
+    return (s==null?"":String(s)).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+  function showToast(msg){
+    var t = document.getElementById("toast");
+    t.textContent = msg; t.classList.add("show");
+    clearTimeout(showToast._h);
+    showToast._h = setTimeout(function(){ t.classList.remove("show"); }, 2600);
+  }
+  function run(fnName, args, onOk, onErr){
+    var call = google.script.run
+      .withSuccessHandler(function(res){ if(onOk) onOk(res); })
+      .withFailureHandler(function(err){ console.error(fnName, err); if(onErr) onErr(err); else showToast(err && err.message ? err.message : "Ha ocurrido un error."); });
+    call[fnName].apply(call, args || []);
+  }
+
+  var isAdmin = false;
+  var contacts = [];
+  var refreshTimer = null;
+
+  function boot(){
+    run("whoAmI", [], function(who){
+      isAdmin = !!who.isAdmin;
+      document.getElementById("whoami").textContent = who.email || "";
+      document.getElementById("tab-panel-btn").disabled = !isAdmin;
+
+      renderForm();
+      wireTabs();
+      wireDrawer();
+      wireLedgerModal();
+
+      if(isAdmin){
+        document.getElementById("panel-locked").hidden = true;
+        document.getElementById("panel-content").hidden = false;
+        wireToolbar();
+      } else {
+        document.getElementById("panel-locked").hidden = false;
+        document.getElementById("panel-content").hidden = true;
+      }
+    });
+  }
+
+  function wireTabs(){
+    document.querySelectorAll(".tab-btn").forEach(function(btn){
+      btn.addEventListener("click", function(){
+        if(btn.disabled) return;
+        document.querySelectorAll(".tab-btn").forEach(function(b){ b.classList.remove("active"); });
+        document.querySelectorAll(".view").forEach(function(v){ v.classList.remove("active"); });
+        btn.classList.add("active");
+        document.getElementById("view-"+btn.dataset.tab).classList.add("active");
+        if(btn.dataset.tab === "panel" && isAdmin){
+          loadContacts();
+          if(refreshTimer) clearInterval(refreshTimer);
+          refreshTimer = setInterval(loadContacts, 20000);
+        } else if(refreshTimer){
+          clearInterval(refreshTimer);
+          refreshTimer = null;
+        }
+      });
+    });
+  }
+
+  // ---------- FORM ----------
+  var formState = {};
+
+  function choiceGroup(name, options, opts){
+    opts = opts || {};
+    var html = '<div class="choice-group" data-field="'+name+'">';
+    options.forEach(function(o){
+      var val = Array.isArray(o) ? o[0] : o;
+      var label = Array.isArray(o) ? o[1] : o;
+      var cls = opts.siNo ? (val==='si'?'si':(val==='no'?'no':'')) : '';
+      html += '<button type="button" class="choice '+cls+'" data-value="'+esc(val)+'">'+esc(label)+'</button>';
+    });
+    html += '</div>';
+    if(opts.withOther){
+      html += '<div class="other-input" data-other-for="'+name+'" hidden><input type="text" placeholder="Especificar…" data-other-input="'+name+'"></div>';
+    }
+    if(opts.withDate){
+      html += '<div class="other-input" data-other-for="'+name+'" hidden><input type="date" data-other-input="'+name+'"></div>';
+    }
+    return html;
+  }
+
+  function renderForm(){
+    var f = document.getElementById("contact-form");
+    f.innerHTML =
+      '<div class="section-title">Datos de contacto</div>' +
+      '<div class="row">' +
+        '<div class="field"><label>Nombre</label><input type="text" id="fn-nombre" required></div>' +
+        '<div class="field"><label>Empresa</label><input type="text" id="fn-empresa"></div>' +
+      '</div>' +
+      '<div class="row">' +
+        '<div class="field"><label>Teléfono</label><input type="tel" id="fn-telefono"></div>' +
+        '<div class="field"><label>Correo electrónico</label><input type="email" id="fn-email"></div>' +
+      '</div>' +
+      '<div class="row">' +
+        '<div class="field"><label>Instagram</label><input type="text" id="fn-instagram" placeholder="@usuario"></div>' +
+        '<div class="field"><label>Fecha de contacto</label><input type="date" id="fn-fechacontacto"></div>' +
+      '</div>' +
+      '<div class="field"><label>Modo de contacto</label><input type="text" id="fn-modocontacto" placeholder="WhatsApp, Instagram, email…"></div>' +
+      '<div class="field"><label>Gestiona</label>' + choiceGroup("gestiona", GESTIONA, {withOther:true}) + '</div>' +
+      '<div class="field"><label>Nombre del viaje</label><input type="text" id="fn-nombreviaje" placeholder="Ej. Kansala Feb 2027"></div>' +
+
+      '<div class="section-title">Tipo de viaje y procedencia</div>' +
+      '<div class="field"><label>Tipo de cliente</label>' + choiceGroup("tipocliente", TIPO_CLIENTE) + '</div>' +
+      '<div class="field"><label>Tipo de viaje</label>' + choiceGroup("tipoviaje", TIPO_VIAJE, {withOther:true}) + '</div>' +
+      '<div class="field"><label>Procedencia</label>' + choiceGroup("procedencia", PROCEDENCIA, {withOther:true}) + '</div>' +
+
+      '<div class="section-title">Vuelo</div>' +
+      '<div class="row3">' +
+        '<div class="field"><label>Vuelo procedencia</label><input type="text" id="fn-vuelo"></div>' +
+        '<div class="field"><label>Compañía aérea</label><input type="text" id="fn-aerolinea"></div>' +
+        '<div class="field"><label>Datos del vuelo</label><input type="text" id="fn-datosvuelo" placeholder="Nº vuelo, horario…"></div>' +
+      '</div>' +
+      '<div class="field"><label>Noche en Gambia</label>' + choiceGroup("nochegambia", [["si","Sí"],["no","No"]], {siNo:true, withDate:true}) + '</div>' +
+
+      '<div class="section-title">Gestión comercial</div>' +
+      '<div class="row">' +
+        '<div class="field"><label>Enviado dossier</label>' + choiceGroup("dossier", [["si","Sí"],["no","No"]], {siNo:true}) + '</div>' +
+        '<div class="field"><label>Enviado presupuesto</label>' + choiceGroup("presupuesto", [["si","Sí"],["no","No"]], {siNo:true}) + '</div>' +
+      '</div>' +
+      '<div class="row">' +
+        '<div class="field"><label>Precio del viaje</label><input type="text" id="fn-precio" placeholder="Ej. 950 €"></div>' +
+        '<div class="field"><label>Fechas de interés</label><input type="text" id="fn-fechasinteres" placeholder="Ej. 12–22 febrero 2027"></div>' +
+      '</div>' +
+      '<div class="row">' +
+        '<div class="field"><label>Confirmación</label>' + choiceGroup("confirmacion", [["si","Sí"],["no","No"]], {siNo:true}) + '</div>' +
+        '<div class="field"><label>Reserva</label>' + choiceGroup("reserva", [["si","Sí"],["no","No"]], {siNo:true}) + '</div>' +
+      '</div>' +
+      '<div class="field"><label>Observaciones</label><textarea id="fn-observaciones"></textarea></div>' +
+      '<div class="field"><label>Estado del contacto</label>' + choiceGroup("estado", ESTADOS) + '</div>' +
+
+      '<div class="btn-row"><button type="submit" class="btn accent">Guardar contacto</button><span class="note" id="form-hint"></span></div>';
+
+    formState = {};
+    f.querySelectorAll(".choice-group").forEach(function(g){
+      var name = g.dataset.field;
+      g.querySelectorAll(".choice").forEach(function(btn){
+        btn.addEventListener("click", function(){
+          g.querySelectorAll(".choice").forEach(function(b){ b.classList.remove("selected"); });
+          btn.classList.add("selected");
+          formState[name] = btn.dataset.value;
+          var otherWrap = f.querySelector('[data-other-for="'+name+'"]');
+          if(otherWrap){
+            var reveal = (btn.dataset.value === "Otros") || (btn.dataset.value === "si" && otherWrap.querySelector("input[type=date]"));
+            otherWrap.hidden = !reveal;
+          }
+        });
+      });
+    });
+
+    f.addEventListener("submit", onSubmitForm);
+  }
+
+  function onSubmitForm(ev){
+    ev.preventDefault();
+    var hint = document.getElementById("form-hint");
+    var nombre = document.getElementById("fn-nombre").value.trim();
+    if(!nombre){ hint.textContent = "El nombre es obligatorio."; hint.style.color="var(--bad)"; return; }
+
+    function otherVal(name){
+      var el = document.querySelector('[data-other-input="'+name+'"]');
+      return el ? el.value.trim() : "";
+    }
+
+    var data = {
+      nombre: nombre,
+      empresa: document.getElementById("fn-empresa").value.trim(),
+      telefono: document.getElementById("fn-telefono").value.trim(),
+      email: document.getElementById("fn-email").value.trim(),
+      instagram: document.getElementById("fn-instagram").value.trim(),
+      fechaContacto: document.getElementById("fn-fechacontacto").value,
+      modoContacto: document.getElementById("fn-modocontacto").value.trim(),
+      gestiona: formState.gestiona || "",
+      gestionaOtro: formState.gestiona === "Otros" ? otherVal("gestiona") : "",
+      nombreViaje: document.getElementById("fn-nombreviaje").value.trim(),
+      tipoCliente: formState.tipocliente || "",
+      tipoViaje: formState.tipoviaje || "",
+      tipoViajeOtro: formState.tipoviaje === "Otros" ? otherVal("tipoviaje") : "",
+      procedencia: formState.procedencia || "",
+      procedenciaOtro: formState.procedencia === "Otros" ? otherVal("procedencia") : "",
+      vueloProcedencia: document.getElementById("fn-vuelo").value.trim(),
+      companiaAerea: document.getElementById("fn-aerolinea").value.trim(),
+      datosVuelo: document.getElementById("fn-datosvuelo").value.trim(),
+      nocheGambia: formState.nochegambia || "no",
+      nocheGambiaFecha: formState.nochegambia === "si" ? otherVal("nochegambia") : "",
+      dossier: formState.dossier || "no",
+      presupuesto: formState.presupuesto || "no",
+      precioViaje: document.getElementById("fn-precio").value.trim(),
+      fechasInteres: document.getElementById("fn-fechasinteres").value.trim(),
+      confirmacion: formState.confirmacion || "no",
+      reserva: formState.reserva || "no",
+      observaciones: document.getElementById("fn-observaciones").value.trim(),
+      estado: formState.estado || "curso"
+    };
+
+    var btn = ev.target.querySelector("button[type=submit]");
+    btn.disabled = true; hint.style.color="var(--ink-faint)"; hint.textContent="Guardando…";
+
+    run("addContact", [data], function(){
+      hint.textContent = "";
+      ev.target.reset();
+      document.querySelectorAll(".choice.selected").forEach(function(b){ b.classList.remove("selected"); });
+      document.querySelectorAll(".other-input").forEach(function(o){ o.hidden = true; });
+      formState = {};
+      btn.disabled = false;
+      showToast("Contacto guardado.");
+    }, function(err){
+      btn.disabled = false;
+      hint.style.color="var(--bad)";
+      hint.textContent = (err && err.message) ? err.message : "No se pudo guardar. Inténtalo de nuevo.";
+    });
+  }
+
+  // ---------- ADMIN PANEL ----------
+  function loadContacts(){
+    run("getContacts", [], function(list){
+      contacts = list || [];
+      renderStats();
+      renderTable();
+    });
+  }
+
+  function filtered(){
+    var q = (document.getElementById("search").value||"").toLowerCase().trim();
+    var fe = document.getElementById("f-estado").value;
+    var ft = document.getElementById("f-tipo").value;
+    var fc = document.getElementById("f-confirmacion").value;
+    return contacts.filter(function(c){
+      if(q && !((c.nombre||"").toLowerCase().indexOf(q)>-1 || (c.empresa||"").toLowerCase().indexOf(q)>-1)) return false;
+      if(fe && c.estado !== fe) return false;
+      if(ft && c.tipoCliente !== ft) return false;
+      if(fc && c.confirmacion !== fc) return false;
+      return true;
+    });
+  }
+
+  function wireToolbar(){
+    ["search","f-estado","f-tipo","f-confirmacion"].forEach(function(id){
+      document.getElementById(id).addEventListener("input", renderTable);
+      document.getElementById(id).addEventListener("change", renderTable);
+    });
+    document.getElementById("refresh-btn").addEventListener("click", loadContacts);
+    document.getElementById("export-csv").addEventListener("click", exportCsv);
+  }
+
+  function renderStats(){
+    var total = contacts.length;
+    var curso = contacts.filter(function(c){return c.estado==='curso';}).length;
+    var pensando = contacts.filter(function(c){return c.estado==='pensando';}).length;
+    var noInteres = contacts.filter(function(c){return c.estado==='no_interes';}).length;
+    var confirmados = contacts.filter(function(c){return c.confirmacion==='si';}).length;
+    var conReserva = contacts.filter(function(c){return c.reserva==='si';}).length;
+    var el = document.getElementById("stats");
+    var cells = [
+      [total,"Total contactos"],[curso,"En curso"],[pensando,"Pensando"],
+      [noInteres,"No interés"],[confirmados,"Confirmados"],[conReserva,"Con reserva"]
+    ];
+    el.innerHTML = cells.map(function(c){
+      return '<div class="stat"><div class="n tabular">'+c[0]+'</div><div class="l">'+c[1]+'</div></div>';
+    }).join("");
+  }
+
+  function estadoPill(estado){
+    var map = {curso:["good","En curso"], pensando:["warn","Pensando"], no_interes:["bad","No interés"]};
+    var m = map[estado] || ["neutral", estado||"—"];
+    return '<span class="pill '+m[0]+'">'+esc(m[1])+'</span>';
+  }
+  function siNoPill(v){
+    if(v==='si') return '<span class="pill good">Sí</span>';
+    return '<span class="pill neutral">No</span>';
+  }
+
+  function renderTable(){
+    if(!isAdmin) return;
+    var list = filtered();
+    var body = document.getElementById("table-body");
+    if(!list.length){
+      body.innerHTML = '<tr class="empty-row"><td colspan="10">Sin contactos que coincidan con los filtros.</td></tr>';
+    } else {
+      body.innerHTML = list.map(function(c){
+        var reservaCell = c.reserva === 'si'
+          ? '<span class="pill good clickable" data-ledger="'+esc(c.id)+'">Sí · ver</span>'
+          : siNoPill(c.reserva);
+        return '<tr data-id="'+esc(c.id)+'">' +
+          '<td>'+esc(c.nombre)+'</td>' +
+          '<td>'+esc(c.empresa||"—")+'</td>' +
+          '<td>'+esc(c.tipoCliente||"—")+'</td>' +
+          '<td>'+esc(c.tipoViaje==='Otros'?c.tipoViajeOtro:(c.tipoViaje||"—"))+'</td>' +
+          '<td>'+esc(c.nombreViaje||"—")+'</td>' +
+          '<td>'+esc(c.procedencia==='Otros'?c.procedenciaOtro:(c.procedencia||"—"))+'</td>' +
+          '<td>'+esc(c.gestiona==='Otros'?c.gestionaOtro:(c.gestiona||"—"))+'</td>' +
+          '<td>'+estadoPill(c.estado)+'</td>' +
+          '<td>'+siNoPill(c.confirmacion)+'</td>' +
+          '<td>'+reservaCell+'</td>' +
+        '</tr>';
+      }).join("");
+    }
+
+    body.querySelectorAll("tr[data-id]").forEach(function(tr){
+      tr.addEventListener("click", function(ev){
+        if(ev.target.closest("[data-ledger]")) return;
+        openDrawer(tr.dataset.id);
+      });
+    });
+    body.querySelectorAll("[data-ledger]").forEach(function(el){
+      el.addEventListener("click", function(ev){
+        ev.stopPropagation();
+        var c = contacts.find(function(x){ return x.id === el.dataset.ledger; });
+        if(c) openLedger(c);
+      });
+    });
+
+    if(currentDrawerId){
+      var open = contacts.find(function(x){ return x.id === currentDrawerId; });
+      if(open) renderDrawerBody(open); else closeDrawer();
+    }
+  }
+
+  function exportCsv(){
+    var cols = [
+      "nombre","empresa","telefono","email","instagram","fechaContacto","modoContacto",
+      "gestiona","gestionaOtro","nombreViaje","tipoCliente","tipoViaje","tipoViajeOtro",
+      "procedencia","procedenciaOtro","vueloProcedencia","companiaAerea","datosVuelo",
+      "nocheGambia","nocheGambiaFecha","dossier","presupuesto","precioViaje","fechasInteres",
+      "confirmacion","reserva","observaciones","estado","createdAt"
+    ];
+    var rows = [cols.join(",")];
+    contacts.forEach(function(c){
+      rows.push(cols.map(function(k){
+        var v = c[k]==null ? "" : String(c[k]);
+        v = v.replace(/"/g,'""');
+        return /[",\n]/.test(v) ? '"'+v+'"' : v;
+      }).join(","));
+    });
+    var csv = rows.join("\n");
+    var blob = new Blob([csv], {type:"text/csv;charset=utf-8;"});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "kansala-contactos-"+slug(new Date().toISOString().slice(0,10))+".csv";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // ---------- DRAWER (detail) ----------
+  var currentDrawerId = null;
+  var currentDrawerLog = [];
+
+  function wireDrawer(){
+    document.getElementById("drawer-close").addEventListener("click", closeDrawer);
+    document.getElementById("drawer-backdrop").addEventListener("click", closeDrawer);
+  }
+  function closeDrawer(){
+    document.getElementById("drawer").classList.remove("show");
+    document.getElementById("drawer-backdrop").classList.remove("show");
+    currentDrawerId = null;
+  }
+
+  function openDrawer(id){
+    var c = contacts.find(function(x){ return x.id === id; });
+    if(!c) return;
+    currentDrawerId = id;
+    document.getElementById("drawer-title").textContent = c.nombre;
+    document.getElementById("drawer").classList.add("show");
+    document.getElementById("drawer-backdrop").classList.add("show");
+    run("getLogEntries", [id], function(log){
+      currentDrawerLog = log || [];
+      renderDrawerBody(c);
+    });
+  }
+
+  function kv(label, value){
+    if(!value) return "";
+    return '<div class="kv"><dt>'+esc(label)+'</dt><dd>'+esc(value)+'</dd></div>';
+  }
+
+  function renderDrawerBody(c){
+    var waNumber = (c.telefono||"").replace(/[^0-9+]/g,"");
+    var waHref = waNumber ? ("https://wa.me/"+waNumber.replace(/\D/g,"")+"?text="+encodeURIComponent("Hola "+c.nombre+", te escribimos de Kansala Ta Toto ")) : "";
+    var mailHref = c.email ? ("mailto:"+c.email+"?subject="+encodeURIComponent("Kansala Ta Toto")) : "";
+
+    var body = document.getElementById("drawer-body");
+    var html = "";
+
+    html += '<div class="detail-section"><h4>Contacto</h4>';
+    html += kv("Empresa", c.empresa) + kv("Teléfono", c.telefono) + kv("Email", c.email) +
+            kv("Instagram", c.instagram) + kv("Fecha contacto", fmtDate(c.fechaContacto)) +
+            kv("Modo contacto", c.modoContacto) +
+            kv("Gestiona", c.gestiona==='Otros'?c.gestionaOtro:c.gestiona);
+    html += '</div>';
+
+    if(waHref || mailHref){
+      html += '<div class="quick-actions">';
+      if(waHref) html += '<a href="'+waHref+'" target="_blank" rel="noopener">WhatsApp</a>';
+      if(mailHref) html += '<a href="'+mailHref+'" target="_blank" rel="noopener">Email</a>';
+      html += '</div>';
+    }
+
+    html += '<div class="detail-section" style="margin-top:20px;"><h4>Viaje</h4>';
+    html += kv("Nombre del viaje", c.nombreViaje) + kv("Tipo de cliente", c.tipoCliente) +
+            kv("Tipo de viaje", c.tipoViaje==='Otros'?c.tipoViajeOtro:c.tipoViaje) +
+            kv("Procedencia", c.procedencia==='Otros'?c.procedenciaOtro:c.procedencia) +
+            kv("Vuelo procedencia", c.vueloProcedencia) + kv("Compañía aérea", c.companiaAerea) +
+            kv("Datos del vuelo", c.datosVuelo) +
+            kv("Noche en Gambia", c.nocheGambia==='si' ? ("Sí"+(c.nocheGambiaFecha?" ("+fmtDate(c.nocheGambiaFecha)+")":"")) : "No") +
+            kv("Fechas de interés", c.fechasInteres) + kv("Precio del viaje", c.precioViaje);
+    html += '</div>';
+
+    html += '<div class="detail-section"><h4>Estado comercial</h4>';
+    html += '<div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;">' +
+      estadoPill(c.estado) +
+      '<span class="pill '+(c.dossier==='si'?'good':'neutral')+'">Dossier '+(c.dossier==='si'?'enviado':'pendiente')+'</span>' +
+      '<span class="pill '+(c.presupuesto==='si'?'good':'neutral')+'">Presupuesto '+(c.presupuesto==='si'?'enviado':'pendiente')+'</span>' +
+      '<span class="pill '+(c.confirmacion==='si'?'good':'neutral')+'">'+(c.confirmacion==='si'?'Confirmado':'Sin confirmar')+'</span>' +
+      (c.reserva==='si' ? '<span class="pill good clickable" id="drawer-open-ledger">Reserva · ver contabilidad</span>' : '<span class="pill neutral">Sin reserva</span>') +
+      '</div>';
+    if(c.observaciones) html += '<div class="kv"><dt>Observaciones</dt><dd>'+esc(c.observaciones)+'</dd></div>';
+    html += '</div>';
+
+    html += '<div class="detail-section"><h4>Historial de gestiones</h4>';
+    html += '<div id="log-list">';
+    if(!currentDrawerLog.length){ html += '<div class="note">Sin anotaciones todavía.</div>'; }
+    currentDrawerLog.forEach(function(e){
+      html += '<div class="log-entry"><div class="meta">'+esc(fmtDateTime(e.fecha))+(e.autor?" · "+esc(e.autor):"")+'</div><div class="txt">'+esc(e.texto)+'</div></div>';
+    });
+    html += '</div>';
+    html += '<div class="log-add"><textarea id="log-input" placeholder="Añadir gestión o comentario…"></textarea><button class="btn secondary" id="log-add-btn">Añadir</button></div>';
+    html += '</div>';
+
+    html += '<div class="btn-row"><button class="btn danger" id="delete-contact">Eliminar contacto</button></div>';
+
+    body.innerHTML = html;
+
+    var ledgerBtn = document.getElementById("drawer-open-ledger");
+    if(ledgerBtn) ledgerBtn.addEventListener("click", function(){ openLedger(c); });
+
+    document.getElementById("log-add-btn").addEventListener("click", function(){
+      var ta = document.getElementById("log-input");
+      var txt = ta.value.trim();
+      if(!txt) return;
+      run("addLogEntry", [c.id, txt], function(){
+        showToast("Gestión añadida.");
+        openDrawer(c.id);
+      });
+    });
+
+    document.getElementById("delete-contact").addEventListener("click", function(){
+      if(!confirm("¿Eliminar definitivamente a "+c.nombre+"? Esta acción no se puede deshacer.")) return;
+      run("deleteContact", [c.id], function(){
+        closeDrawer();
+        showToast("Contacto eliminado.");
+        loadContacts();
+      });
+    });
+  }
+
+  // ---------- LEDGER (reservation accounting) ----------
+  var currentLedgerTripId = null;
+
+  function wireLedgerModal(){
+    document.getElementById("ledger-close").addEventListener("click", closeLedger);
+    document.getElementById("ledger-backdrop").addEventListener("click", function(ev){
+      if(ev.target.id === "ledger-backdrop") closeLedger();
+    });
+  }
+  function closeLedger(){
+    document.getElementById("ledger-backdrop").classList.remove("show");
+    currentLedgerTripId = null;
+  }
+
+  function openLedger(contact){
+    var tripId = slug(contact.nombreViaje || contact.id);
+    currentLedgerTripId = tripId;
+    document.getElementById("ledger-title").textContent = contact.nombreViaje || ("Viaje de "+contact.nombre);
+    document.getElementById("ledger-sub").textContent = contact.fechasInteres || "Fechas por confirmar";
+    document.getElementById("ledger-backdrop").classList.add("show");
+    document.getElementById("ledger-body").innerHTML = '<div class="note">Cargando…</div>';
+
+    run("getReserva", [tripId], function(res){
+      var data = res.reserva || {nombreViaje: contact.nombreViaje||"", fechasViaje: contact.fechasInteres||""};
+      data.pagos = res.pagos || [];
+      renderLedgerBody(tripId, data);
+    }, function(){
+      document.getElementById("ledger-body").innerHTML = '<div class="note">No se pudo cargar la contabilidad.</div>';
+    });
+  }
+
+  function renderLedgerBody(tripId, data){
+    var pagos = data.pagos || [];
+    var total = pagos.reduce(function(s,p){ var n = parseFloat((p.importe||"").toString().replace(",",".")); return s + (isNaN(n)?0:n); }, 0);
+    var html = '';
+    html += '<div class="field"><label>Fechas del viaje</label><input type="text" id="ledger-fechas" value="'+esc(data.fechasViaje||"")+'"></div>';
+    html += '<div class="table-wrap" style="margin:14px 0;"><table><thead><tr><th>Fecha reserva</th><th>Importe</th><th>Nombre</th><th>Observaciones</th></tr></thead><tbody id="ledger-rows">';
+    pagos.forEach(function(p){
+      html += '<tr><td>'+esc(fmtDate(p.fecha))+'</td><td class="tabular">'+esc(p.importe)+'</td><td>'+esc(p.nombre)+'</td><td>'+esc(p.observaciones||"")+'</td></tr>';
+    });
+    if(!pagos.length) html += '<tr class="empty-row"><td colspan="4">Sin pagos registrados.</td></tr>';
+    html += '</tbody></table></div>';
+    html += '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;"><span class="note">Total cobrado</span><span class="ledger-total tabular">'+total.toFixed(2)+' €</span></div>';
+    html += '<div class="section-title" style="margin-top:0;">Añadir pago</div>';
+    html += '<div class="row3">' +
+      '<div class="field"><label>Fecha</label><input type="date" id="new-pago-fecha"></div>' +
+      '<div class="field"><label>Importe</label><input type="text" id="new-pago-importe" placeholder="Ej. 200"></div>' +
+      '<div class="field"><label>Nombre</label><input type="text" id="new-pago-nombre"></div>' +
+    '</div>' +
+    '<div class="field"><label>Observaciones</label><input type="text" id="new-pago-obs"></div>' +
+    '<div class="btn-row"><button class="btn accent" id="add-pago-btn">Añadir pago</button></div>';
+
+    document.getElementById("ledger-body").innerHTML = html;
+
+    document.getElementById("ledger-fechas").addEventListener("change", function(ev){
+      run("saveReservaFechas", [tripId, data.nombreViaje||"", ev.target.value], function(){}, function(){ showToast("No se pudieron guardar las fechas."); });
+    });
+
+    document.getElementById("add-pago-btn").addEventListener("click", function(){
+      var fecha = document.getElementById("new-pago-fecha").value;
+      var importe = document.getElementById("new-pago-importe").value.trim();
+      var nombre = document.getElementById("new-pago-nombre").value.trim();
+      var obs = document.getElementById("new-pago-obs").value.trim();
+      if(!importe || !nombre){ showToast("Indica al menos importe y nombre."); return; }
+      var nuevoPago = {fecha:fecha||new Date().toISOString().slice(0,10), importe:importe, nombre:nombre, observaciones:obs};
+      run("addPago", [tripId, nuevoPago], function(){
+        showToast("Pago añadido.");
+        data.pagos = pagos.concat([nuevoPago]);
+        renderLedgerBody(tripId, data);
+      });
+    });
+  }
+
+  boot();
+})();
+</script>
