@@ -1,91 +1,19 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
-  <base target="_top">
-  <meta charset="utf-8">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <?!= include('Stylesheet'); ?>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kansala CRM</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; background:#F3F4EF; }
+  iframe { position:fixed; inset:0; width:100%; height:100%; border:0; }
+</style>
 </head>
 <body>
-  <div id="app">
-    <div class="topbar">
-      <div class="brand">
-        <h1>Kansala CRM</h1>
-        <span class="sub">Kafountine · Casamance</span>
-      </div>
-      <div style="display:flex; align-items:center; gap:14px;">
-        <span class="whoami" id="whoami"></span>
-        <div class="tabs" id="tabs">
-          <button class="tab-btn active" data-tab="form">Nuevo contacto</button>
-          <button class="tab-btn" data-tab="panel" id="tab-panel-btn">Panel</button>
-        </div>
-      </div>
-    </div>
-
-    <div id="view-form" class="view active">
-      <div class="card form-card">
-        <div class="form-head">
-          <h2>Registrar contacto</h2>
-          <p>Datos de una persona u organizador interesado en viajar con Kansala Ta Toto.</p>
-        </div>
-        <form id="contact-form"></form>
-      </div>
-    </div>
-
-    <div id="view-panel" class="view">
-      <div id="panel-locked" class="locked card" hidden>
-        <h3 style="margin-bottom:8px;">Acceso solo para el equipo gestor</h3>
-        <p style="color:var(--ink-soft); font-size:13.5px;">Esta vista muestra todos los contactos y datos de reservas. Si necesitas verla, pide a un administrador que añada tu correo en la pestaña Config del Sheet.</p>
-      </div>
-      <div id="panel-content" hidden>
-        <div class="stats" id="stats"></div>
-        <div class="toolbar">
-          <input type="search" id="search" placeholder="Buscar por nombre o empresa…">
-          <select id="f-estado"><option value="">Estado: todos</option><option value="curso">En curso</option><option value="pensando">Pensando</option><option value="no_interes">No interés</option></select>
-          <select id="f-tipo"><option value="">Tipo: todos</option><option value="Organizador">Organizador</option><option value="Particular">Particular</option></select>
-          <select id="f-confirmacion"><option value="">Confirmación: todas</option><option value="si">Confirmados</option><option value="no">Sin confirmar</option></select>
-          <div class="spacer"></div>
-          <button class="btn secondary" id="refresh-btn">Actualizar</button>
-          <button class="btn secondary" id="export-csv">Exportar CSV</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr>
-              <th>Nombre</th><th>Empresa</th><th>Tipo</th><th>Tipo de viaje</th><th>Viaje</th>
-              <th>Procedencia</th><th>Gestiona</th><th>Estado</th><th>Confirm.</th><th>Reserva</th>
-            </tr></thead>
-            <tbody id="table-body"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="drawer-backdrop" id="drawer-backdrop"></div>
-  <div class="drawer" id="drawer">
-    <div class="drawer-head">
-      <h3 id="drawer-title">Contacto</h3>
-      <button class="close-x" id="drawer-close">✕</button>
-    </div>
-    <div class="drawer-body" id="drawer-body"></div>
-  </div>
-
-  <div class="modal-backdrop" id="ledger-backdrop">
-    <div class="modal">
-      <div class="modal-head">
-        <div>
-          <h3 id="ledger-title">Contabilidad de reserva</h3>
-          <div class="note" id="ledger-sub"></div>
-        </div>
-        <button class="close-x" id="ledger-close">✕</button>
-      </div>
-      <div class="modal-body" id="ledger-body"></div>
-    </div>
-  </div>
-
-  <div class="toast" id="toast"></div>
-
-  <?!= include('JavaScript'); ?>
+  <iframe
+    src="https://script.google.com/macros/s/AKfycbz3-_ihlvZJ937BaT_-G7hF6wm2Nt5fHn_NzpUE0T6c0O-G_NCZ3NxjXHVsfQ25PJ5dnw/exec"
+    title="Kansala CRM"
+    allow="clipboard-write">
+  </iframe>
 </body>
 </html>
